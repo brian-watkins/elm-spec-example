@@ -6,6 +6,7 @@ import Spec.Setup as Setup
 import Spec.Markup as Markup
 import Spec.Markup.Selector exposing (..)
 import Spec.Claim as Claim
+import Spec.Http
 import Spec.Http.Stub as Stub
 import Spec.Http.Route as Route
 import Json.Encode as Encode
@@ -15,32 +16,66 @@ import Runner
 
 makeHtttpRequestOnInitSpec : Spec App.Model App.Msg
 makeHtttpRequestOnInitSpec =
-  describe "An HTTP request is made when the app starts"
-  [ scenario "the request is successful" (
+  describe "An authenticated HTTP request is made to fetch things when the app starts"
+  [ scenario "the access token request fails" (
       given (
         Setup.init (App.init testFlags)
           |> Setup.withUpdate App.update
           |> Setup.withView App.view
-          |> Stub.serve [ successStub ]
+          |> Stub.serve
+            [ failedAccessTokenStub
+            ]
       )
-      |> it "displays the results of the request" (
-        Markup.observeElements
-          |> Markup.query << by [ tag "li" ]
+      |> it "displays an error message" (
+        Markup.observeElement
+          |> Markup.query << by [ tag "h1" ]
           |> expect (
-            Claim.isListWhere
-              [ Markup.text <| equals "birds"
-              , Markup.text <| equals "fish"
-              , Markup.text <| equals "trees"
-              ]
+            Claim.isSomethingWhere <|
+              Markup.text <| 
+              equals "You do not have access!"
           )
       )
     )
-  , scenario "the request is unsuccessful" (
+  , scenario "both requests are successful" (
       given (
         Setup.init (App.init testFlags)
           |> Setup.withUpdate App.update
           |> Setup.withView App.view
-          |> Stub.serve [ failureStub ]
+          |> Stub.serve
+            [ successfulThingsStub
+            , successfulAccessTokenStub
+            ]
+      )
+      |> observeThat
+        [ it "sends the access token in the request for things" (
+            Spec.Http.observeRequests (Route.get testThingsUrl)
+              |> expect (
+                Claim.isListWhere
+                  [ Spec.Http.header "Authorization" <|
+                      Claim.isSomethingWhere <|
+                      Claim.isStringContaining 1 testAccessToken
+                  ]
+              )
+          )
+        , it "displays the results of the request for things" (
+            Markup.observeElements
+              |> Markup.query << by [ tag "li" ]
+              |> expect (
+                Claim.isListWhere
+                  [ Markup.text <| equals "birds"
+                  , Markup.text <| equals "fish"
+                  , Markup.text <| equals "trees"
+                  ]
+              )
+          )
+        ]
+    )
+  , scenario "the things request is unsuccessful" (
+      given (
+        Setup.init (App.init testFlags)
+          |> Setup.withUpdate App.update
+          |> Setup.withView App.view
+          |> Stub.serve [ successfulAccessTokenStub, failedThingsStub ]
       )
       |> it "displays some default things" (
         Markup.observeElements
@@ -57,17 +92,34 @@ makeHtttpRequestOnInitSpec =
 
 testFlags : App.Flags
 testFlags =
-  { apiURL = "http://testing-only.com/api/things"
+  { apiBaseURL = "http://testing-only.com/api"
   }
 
-successStub =
-  Stub.for (Route.get testFlags.apiURL)
+testAccessTokenUrl =
+  testFlags.apiBaseURL ++ "/accessToken"
+
+testThingsUrl =
+  testFlags.apiBaseURL ++ "/things"
+
+testAccessToken =
+  "my-fake-access-token"
+
+successfulAccessTokenStub =
+  Stub.for (Route.get testAccessTokenUrl)
+    |> Stub.withBody (Stub.withJson <| Encode.string testAccessToken)
+
+failedAccessTokenStub =
+  Stub.for (Route.get testAccessTokenUrl)
+    |> Stub.withStatus 403
+
+successfulThingsStub =
+  Stub.for (Route.get testThingsUrl)
     |> Stub.withBody (Stub.withJson <|
       Encode.list Encode.string [ "birds", "fish", "trees" ]
     )
 
-failureStub =
-  Stub.for (Route.get testFlags.apiURL)
+failedThingsStub =
+  Stub.for (Route.get testThingsUrl)
     |> Stub.withStatus 403
 
 main =

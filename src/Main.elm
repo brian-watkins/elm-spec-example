@@ -6,10 +6,13 @@ import Http
 import Json.Decode as Json
 import Api exposing (AccessToken)
 import State exposing (ProgramState(..))
+import Time exposing (Posix)
+import Task
 
 type alias Model =
   { apiBaseUrl: String
   , state: ProgramState
+  , currentTime: Posix
   }
 
 
@@ -17,12 +20,14 @@ defaultModel : String -> Model
 defaultModel apiBaseURL =
   { apiBaseUrl = apiBaseURL
   , state = Unauthenticated
+  , currentTime = Time.millisToPosix 0
   }
 
 
 type Msg
   = FetchedAccessToken (Result Http.Error AccessToken)
   | FetchedThings (Result Http.Error (List String))
+  | TimeUpdated Posix
 
 
 view : Model -> Html Msg
@@ -32,10 +37,19 @@ view model =
       Html.h1 [] [ Html.text "You do not have access!" ]
     Authenticated state ->
       Html.div []
-      [ Html.ul [ Attr.id "things" ] <|
+      [ currentTimeView model.currentTime
+      , Html.ul [ Attr.id "things" ] <|
         List.map thingView state.things
       ]
 
+
+currentTimeView : Posix -> Html Msg
+currentTimeView time =
+  Html.div [ Attr.attribute "data-current-time" "" ]
+    [ (Time.posixToMillis time // 1000)
+      |> String.fromInt
+      |> Html.text
+    ]
 
 thingView : String -> Html Msg
 thingView thing =
@@ -59,7 +73,8 @@ update msg model =
           ( { model | state = State.withThings model.state things }, Cmd.none )
         Err _ ->
           ( { model | state = State.withThings model.state State.defaultThings }, Cmd.none )
-
+    TimeUpdated posix ->
+      ( { model | currentTime = posix }, Cmd.none )
 
 fetchThings : String -> AccessToken -> Cmd Msg
 fetchThings baseUrl accessToken =
@@ -77,13 +92,17 @@ type alias Flags =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+  Time.every 1000 TimeUpdated
 
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
   ( defaultModel flags.apiBaseURL
-  , Api.fetchAccessToken flags.apiBaseURL FetchedAccessToken
+  , Cmd.batch
+    [ Api.fetchAccessToken flags.apiBaseURL FetchedAccessToken
+    , Time.now
+      |> Task.perform TimeUpdated
+    ]
   )
 
 
